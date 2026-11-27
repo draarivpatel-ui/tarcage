@@ -266,3 +266,46 @@ for (const target of ['target', './target', 'a/../target', 'd/../../target']) {
     assert.equal(validateSymlinkTarget('ln', target, policy), target);
   });
 }
+
+test('hardlink directly targeting a symlink is unsafe during inspection', async () => {
+  const report = await inspectTar(makeTar([
+    file('target', 'x'),
+    symlink('slink', 'target'),
+    hardlink('copy', 'slink')
+  ]), { allowSymlinks: true, allowHardlinks: true });
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_LINK_INVALID');
+});
+
+test('hardlink directly targeting a differently cased symlink is rejected conservatively', async () => {
+  const report = await inspectTar(makeTar([
+    file('target', 'x'),
+    symlink('Link', 'target'),
+    hardlink('copy', 'link')
+  ]), { allowSymlinks: true, allowHardlinks: true });
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_LINK_INVALID');
+});
+
+
+for (const target of ['file.txt:stream', 'safe\u061ctarget']) {
+  test('link target alternate data stream or format character rejected for symlink ' + JSON.stringify(target), async () => {
+    const report = await inspectTar(makeTar([symlink('ln', target)]), { allowSymlinks: true });
+    assert.equal(report.safe, false);
+  });
+
+  test('link target alternate data stream or format character rejected for hardlink ' + JSON.stringify(target), async () => {
+    const report = await inspectTar(makeTar([hardlink('ln', target)]), { allowHardlinks: true });
+    assert.equal(report.safe, false);
+  });
+}
+
+test('hardlink targeting a symlink declared later is still rejected', async () => {
+  const report = await inspectTar(makeTar([
+    file('target', 'x'),
+    hardlink('copy', 'slink'),
+    symlink('slink', 'target')
+  ]), { allowSymlinks: true, allowHardlinks: true });
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_LINK_INVALID');
+});

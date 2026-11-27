@@ -416,3 +416,45 @@ test('CLI supports a positional archive after double dash', async () => {
     await cleanup(item.dir);
   }
 });
+
+test('CLI human findings neutralize newline ANSI and bidi characters in archive paths', async () => {
+  const item = await fixture();
+  try {
+    const payload = 'clean\ninjected\x1b[31m\u202e';
+    const archivePath = path.join(item.dir, 'terminal.tar');
+    await writeFile(archivePath, makeTar([file(payload, 'x')]));
+    const result = runCli(['inspect', archivePath]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout.includes('\x1b'), false);
+    assert.equal(result.stdout.includes('\u202e'), false);
+    assert.equal(result.stdout.includes('clean\\ninjected'), true);
+  } finally {
+    await cleanup(item.dir);
+  }
+});
+
+test('CLI JSON output remains parseable while escaping terminal control rendering', async () => {
+  const item = await fixture();
+  try {
+    const payload = 'clean\u202e\x1binjected';
+    const archivePath = path.join(item.dir, 'terminal-json.tar');
+    await writeFile(archivePath, makeTar([file(payload, 'x')]));
+    const result = runCli(['inspect', archivePath, '--json']);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout.includes('\x1b'), false);
+    assert.equal(result.stdout.includes('\u202e'), false);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.findings.at(-1).path, payload);
+  } finally {
+    await cleanup(item.dir);
+  }
+});
+
+test('CLI errors neutralize control characters in user-controlled command text', () => {
+  const command = 'bad\n\x1b\u202ecommand';
+  const result = runCli([command]);
+  assert.equal(result.status, 2);
+  assert.equal(result.stderr.includes('\x1b'), false);
+  assert.equal(result.stderr.includes('\u202e'), false);
+  assert.equal(result.stderr.includes('bad\\n'), true);
+});

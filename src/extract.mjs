@@ -139,6 +139,24 @@ async function chmodCreated(target, mode, archivePath) {
   }
 }
 
+export async function writeFileChunkFully(handle, chunk, archivePath) {
+  let offset = 0;
+  while (offset < chunk.length) {
+    let result;
+    try {
+      result = await handle.write(chunk, offset, chunk.length - offset, null);
+    } catch (error) {
+      throw ioError('cannot write output file', { path: archivePath }, error);
+    }
+    const written = result.bytesWritten;
+    if (!Number.isSafeInteger(written) || written < 1 || written > chunk.length - offset) {
+      throw ioError('output file write returned an invalid partial byte count', { path: archivePath, bytesWritten: written });
+    }
+    offset += written;
+  }
+  return offset;
+}
+
 function stripEntryName(name, stripComponents) {
   if (name === '.') return null;
   if (stripComponents === 0) return name;
@@ -230,12 +248,7 @@ async function createFileSink(root, entry, state) {
   let closed = false;
   return {
     async write(chunk) {
-      try {
-        await handle.write(chunk);
-        state.bytesWritten += chunk.length;
-      } catch (error) {
-        throw ioError('cannot write output file', { path: entry.name }, error);
-      }
+      state.bytesWritten += await writeFileChunkFully(handle, chunk, entry.name);
     },
     async close() {
       if (closed) return;
@@ -252,9 +265,22 @@ async function createFileSink(root, entry, state) {
 
 async function extractDirectory(root, entry, state) {
   const target = await secureEnsureDirectory(root, entry.name, state);
-  if (state.createdDirSet.has(target)) await chmodCreated(target, entry.mode, entry.name);
+  if (state.createdDirSet.has(target)) {
+    state.pendingDirectoryModes.set(target, { mode: entry.mode, path: entry.name });
+  }
   state.directories += 1;
   state.extracted += 1;
+}
+
+async function applyDirectoryModes(state) {
+  const applied = new Set();
+  for (const target of [...state.createdDirs].reverse()) {
+    if (applied.has(target)) continue;
+    const pending = state.pendingDirectoryModes.get(target);
+    if (pending === undefined) continue;
+    applied.add(target);
+    await chmodCreated(target, pending.mode, pending.path);
+  }
 }
 
 async function extractSymlink(root, entry, state) {
@@ -355,6 +381,11 @@ async function auditResolvedSymlinkTargets(root, planned, policy) {
 }
 
 async function rollback(state) {
+  if (process.platform !== 'win32') {
+    for (const target of state.createdDirs) {
+      await fs.chmod(target, 0o700).catch(() => {});
+    }
+  }
   for (const target of [...state.createdFiles].reverse()) {
     await fs.unlink(target).catch(() => {});
   }
@@ -389,17 +420,19 @@ export async function extractTar(input, destDir, options = {}) {
     directories: 0,
     symlinks: 0,
     hardlinks: 0,
-    bytesWritten: 0
+    bytesWritten: 0,
+    pendingDirectoryModes: new Map()
   };
 
   try {
+    await auditResolvedSymlinkTargets(destination.realRoot, planned, policy);
     const secondPass = await scanWithPolicy(input, policy, {
       onEntry: (entry) => extractionSink(destination.realRoot, entry, policy, state)
     });
     if (secondPass.stats.uncompressedSha256 !== preflight.stats.uncompressedSha256) {
       throw new TarExtractionError(C.INPUT_CHANGED, 'archive input changed between validation and extraction');
     }
-    await auditResolvedSymlinkTargets(destination.realRoot, planned, policy);
+    await applyDirectoryModes(state);
     return {
       dryRun: false,
       destDir: destination.resolved,

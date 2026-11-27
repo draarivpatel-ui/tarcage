@@ -1,8 +1,10 @@
 import { createTarPolicy } from './policy.mjs';
 import { TARCAGE_ERROR_CODES as C, TarLinkError, TarPathError } from './errors.mjs';
 
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/u;
-const RESERVED_DEVICE_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const CONTROL_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
+const UNPAIRED_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
+const WINDOWS_INVALID_CHARACTER_RE = /[<>:"|?*]/;
+const RESERVED_DEVICE_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)$/i;
 const DRIVE_RE = /^[a-zA-Z]:/;
 const FORBIDDEN_LINK_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -28,7 +30,7 @@ export function validateTarPath(entryPath, options = {}) {
   if (entryPath.startsWith('//') || entryPath.startsWith('\\\\')) add(C.UNC_PATH, 'UNC paths are not allowed');
   else if (entryPath.startsWith('/') || entryPath.startsWith('\\')) add(C.ABSOLUTE_PATH, 'absolute paths are not allowed');
   if (DRIVE_RE.test(entryPath)) add(C.DRIVE_PATH, 'Windows drive paths are not allowed');
-  if (CONTROL_RE.test(entryPath)) add(C.CONTROL_CHARACTER, 'control, bidi, or invisible formatting characters are not allowed');
+  if (CONTROL_RE.test(entryPath) || UNPAIRED_SURROGATE_RE.test(entryPath)) add(C.CONTROL_CHARACTER, 'control, bidi, invisible formatting, or unpaired surrogate characters are not allowed');
   if (entryPath.includes('\\')) add(C.BACKSLASH_SEPARATOR, 'backslash path separators are not allowed');
 
   const hadTrailingSlash = /\/+$/.test(entryPath);
@@ -48,6 +50,7 @@ export function validateTarPath(entryPath, options = {}) {
       continue;
     }
     if (/[. ]$/.test(segment)) add(C.TRAILING_DOT_OR_SPACE, 'path components cannot end in a dot or space');
+    if (WINDOWS_INVALID_CHARACTER_RE.test(segment)) add(C.WINDOWS_INVALID_CHARACTER, 'path components cannot contain Windows-invalid characters or alternate data stream syntax');
     const stem = segment.split('.', 1)[0];
     if (RESERVED_DEVICE_RE.test(stem)) add(C.RESERVED_NAME, 'Windows reserved device names are not allowed');
     if (byteLength(segment) > policy.maxComponentLength) add(C.COMPONENT_TOO_LONG, 'path component exceeds maxComponentLength');
@@ -87,8 +90,8 @@ function validateLinkCharacters(target, kind, entryName, policy) {
   if (byteLength(target) > policy.maxPathLength) {
     throw new TarLinkError(C.PATH_TOO_LONG, kind + ' target exceeds maxPathLength', { path: entryName, linkname: target });
   }
-  if (CONTROL_RE.test(target)) {
-    throw new TarLinkError(C.CONTROL_CHARACTER, kind + ' target contains a forbidden control character', { path: entryName, linkname: target });
+  if (CONTROL_RE.test(target) || UNPAIRED_SURROGATE_RE.test(target)) {
+    throw new TarLinkError(C.CONTROL_CHARACTER, kind + ' target contains a forbidden control or invalid Unicode character', { path: entryName, linkname: target });
   }
   if (target.startsWith('//') || target.startsWith('\\\\')) {
     throw new TarLinkError(C.UNC_PATH, kind + ' target cannot be a UNC path', { path: entryName, linkname: target });
@@ -114,6 +117,9 @@ function validateLinkSegments(target, kind, entryName, policy) {
     if (part === '' || part === '.' || part === '..') continue;
     if (/[. ]$/.test(part)) {
       throw new TarLinkError(C.TRAILING_DOT_OR_SPACE, kind + ' target component cannot end in a dot or space', { path: entryName, linkname: target });
+    }
+    if (WINDOWS_INVALID_CHARACTER_RE.test(part)) {
+      throw new TarLinkError(C.WINDOWS_INVALID_CHARACTER, kind + ' target component contains a Windows-invalid character or alternate data stream syntax', { path: entryName, linkname: target });
     }
     const stem = part.split('.', 1)[0];
     if (RESERVED_DEVICE_RE.test(stem)) {

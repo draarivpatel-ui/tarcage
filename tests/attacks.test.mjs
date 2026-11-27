@@ -328,3 +328,23 @@ test('overlapping device and child entry is rejected when special files are allo
   assert.equal(report.safe, false);
   assert.equal(report.findings[0].code, 'TARCAGE_OVERLAPPING_ENTRIES');
 });
+
+test('gzip trailing zero padding is rejected as a strict container polyglot', async () => {
+  const input = Buffer.concat([gzip(makeTar([file('a', 'x')])), Buffer.alloc(8)]);
+  const report = await inspectTar(input);
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_GZIP_ERROR');
+});
+
+test('gzip trailing zero padding can be tolerated only when strictEof is disabled', async () => {
+  const input = Buffer.concat([gzip(makeTar([file('a', 'x')])), Buffer.alloc(8)]);
+  const report = await inspectTar(input, { strictEof: false });
+  assert.equal(report.safe, true);
+});
+
+test('compressed byte cap accounts for input bytes beyond an early gzip member end', async () => {
+  const input = Buffer.concat([gzip(makeTar([file('a', 'x')])), Buffer.alloc(200000)]);
+  const report = await inspectTar(input, { maxCompressedBytes: input.length - 1 });
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_COMPRESSED_LIMIT');
+});

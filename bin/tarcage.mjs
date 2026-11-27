@@ -163,8 +163,32 @@ function assertNoUnknownFlags(flags) {
   }
 }
 
+const TERMINAL_UNSAFE_RE = /[\u0080-\u009f\p{Cf}\u2028\u2029]/u;
+
+function escapeCodePoint(codePoint) {
+  if (codePoint <= 0xffff) return '\\u' + codePoint.toString(16).padStart(4, '0');
+  const adjusted = codePoint - 0x10000;
+  const high = 0xd800 + (adjusted >> 10);
+  const low = 0xdc00 + (adjusted & 0x3ff);
+  return '\\u' + high.toString(16) + '\\u' + low.toString(16);
+}
+
+function escapeTerminalJsonText(text) {
+  let output = '';
+  for (const character of text) {
+    const codePoint = character.codePointAt(0);
+    if (TERMINAL_UNSAFE_RE.test(character) || (codePoint >= 0xd800 && codePoint <= 0xdfff)) output += escapeCodePoint(codePoint);
+    else output += character;
+  }
+  return output;
+}
+
+function terminalSafe(value) {
+  return escapeTerminalJsonText(JSON.stringify(String(value))).slice(1, -1);
+}
+
 function printJson(value) {
-  process.stdout.write(JSON.stringify(value, null, 2) + '\n');
+  process.stdout.write(escapeTerminalJsonText(JSON.stringify(value, null, 2)) + '\n');
 }
 
 function printInspection(report) {
@@ -174,8 +198,8 @@ function printInspection(report) {
   process.stdout.write('entries: ' + report.stats.entries + '\n');
   process.stdout.write('uncompressed bytes: ' + report.stats.uncompressedBytes + '\n');
   for (const finding of report.findings) {
-    const location = finding.path ? ' at ' + finding.path : '';
-    process.stdout.write(finding.severity + ': ' + finding.code + location + ': ' + finding.message + '\n');
+    const location = finding.path ? ' at ' + terminalSafe(finding.path) : '';
+    process.stdout.write(finding.severity + ': ' + finding.code + location + ': ' + terminalSafe(finding.message) + '\n');
   }
 }
 
@@ -209,8 +233,8 @@ async function main(argv) {
     if (json) printJson(result);
     else {
       process.stdout.write('valid: ' + (result.valid ? 'yes' : 'no') + '\n');
-      if (result.normalized !== null) process.stdout.write('normalized: ' + result.normalized + '\n');
-      for (const finding of result.findings) process.stdout.write(finding.code + ': ' + finding.message + '\n');
+      if (result.normalized !== null) process.stdout.write('normalized: ' + terminalSafe(result.normalized) + '\n');
+      for (const finding of result.findings) process.stdout.write(finding.code + ': ' + terminalSafe(finding.message) + '\n');
     }
     return result.valid ? 0 : 1;
   }
@@ -237,9 +261,9 @@ try {
 } catch (error) {
   const cliError = error instanceof TarPolicyError || error instanceof TarInputError;
   if (error instanceof TarCageError) {
-    process.stderr.write(error.code + ': ' + error.reason + '\n');
+    process.stderr.write(error.code + ': ' + terminalSafe(error.reason) + '\n');
   } else {
-    process.stderr.write('TARCAGE_CLI_ERROR: ' + (error && error.message ? error.message : 'unknown failure') + '\n');
+    process.stderr.write('TARCAGE_CLI_ERROR: ' + terminalSafe(error && error.message ? error.message : 'unknown failure') + '\n');
   }
   process.exitCode = cliError ? 2 : 1;
 }

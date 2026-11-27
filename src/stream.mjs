@@ -25,17 +25,29 @@ function* bufferChunks(buffer) {
   }
 }
 
-async function pathStartsWithGzip(filePath) {
+async function probeArchivePath(filePath) {
   let handle;
   try {
     handle = await fs.open(filePath, 'r');
     const header = Buffer.alloc(2);
-    const { bytesRead } = await handle.read(header, 0, 2, 0);
-    return bytesRead === 2 && header[0] === GZIP_MAGIC_0 && header[1] === GZIP_MAGIC_1;
+    const [{ bytesRead }, stat] = await Promise.all([handle.read(header, 0, 2, 0), handle.stat()]);
+    return {
+      gzip: bytesRead === 2 && header[0] === GZIP_MAGIC_0 && header[1] === GZIP_MAGIC_1,
+      inputBytes: stat.isFile() ? stat.size : null
+    };
   } catch (error) {
     throw new TarInputError(C.INPUT_IO, 'cannot open archive input', { inputType: 'path' }, error);
   } finally {
     if (handle) await handle.close().catch(() => {});
+  }
+}
+
+function enforceInputSizeLimit(inputBytes, policy) {
+  if (inputBytes !== null && inputBytes > policy.maxCompressedBytes) {
+    throw new TarLimitError(C.COMPRESSED_LIMIT, 'input exceeds maxCompressedBytes before streaming begins', {
+      compressedBytes: inputBytes,
+      maxCompressedBytes: policy.maxCompressedBytes
+    });
   }
 }
 
@@ -109,6 +121,7 @@ export async function openArchiveInput(input, policy) {
     compressed: false,
     compressedBytes: 0,
     uncompressedBytes: 0,
+    inputBytes: null,
     hash: createHash('sha256'),
     streamError: null
   };
@@ -116,18 +129,25 @@ export async function openArchiveInput(input, policy) {
   let source;
   const bytes = byteInput(input);
   if (bytes !== null) {
+    state.inputBytes = bytes.length;
     if (policy.compressed === 'auto') {
       state.compressed = bytes.length >= 2 && bytes[0] === GZIP_MAGIC_0 && bytes[1] === GZIP_MAGIC_1;
     } else {
       state.compressed = policy.compressed;
     }
+    enforceInputSizeLimit(state.inputBytes, policy);
     source = Readable.from(bufferChunks(bytes), { highWaterMark: 64 * 1024 });
   } else if (typeof input === 'string' && input.length > 0) {
+    let probe = null;
     if (policy.compressed === 'auto') {
-      state.compressed = await pathStartsWithGzip(input);
+      probe = await probeArchivePath(input);
+      state.compressed = probe.gzip;
     } else {
       state.compressed = policy.compressed;
+      probe = await probeArchivePath(input);
     }
+    state.inputBytes = probe.inputBytes;
+    enforceInputSizeLimit(state.inputBytes, policy);
     try {
       source = createReadStream(input, { highWaterMark: 64 * 1024 });
     } catch (error) {
@@ -141,8 +161,9 @@ export async function openArchiveInput(input, policy) {
   const uncompressedCounter = makeCounter(policy, state, 'uncompressed');
   let output;
   let streams;
+  let gunzip = null;
   if (state.compressed) {
-    const gunzip = createGunzip({ chunkSize: 64 * 1024 });
+    gunzip = createGunzip({ chunkSize: 64 * 1024 });
     output = source.pipe(compressedCounter).pipe(gunzip).pipe(uncompressedCounter);
     streams = [source, compressedCounter, gunzip, uncompressedCounter];
   } else {
@@ -161,6 +182,15 @@ export async function openArchiveInput(input, policy) {
     },
     finish() {
       if (state.digest) return state.digest;
+      if (state.compressed && policy.strictEof && gunzip !== null) {
+        const expected = state.inputBytes === null ? state.compressedBytes : state.inputBytes;
+        if (gunzip.bytesWritten !== expected) {
+          throw new TarFormatError(C.GZIP_ERROR, 'gzip input has unread trailing bytes after the final member', {
+            compressedBytes: expected,
+            consumedCompressedBytes: gunzip.bytesWritten
+          });
+        }
+      }
       state.digest = state.hash.digest('hex');
       return state.digest;
     }

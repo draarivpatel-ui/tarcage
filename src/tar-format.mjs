@@ -7,6 +7,7 @@ const ASCII_DECODER = new TextDecoder('ascii', { fatal: true });
 const STRICT_PAX_VALUE_KEYS = new Set(['path', 'linkpath', 'size']);
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 const PAX_KEY_RE = /^[A-Za-z0-9._-]+$/;
+const UNSUPPORTED_PAX_KEYS = new Set(['GNU.sparse', 'GNU.dumpdir', 'SCHILY.filetype']);
 
 export function isZeroBlock(block) {
   if (!block || block.length === 0) return false;
@@ -65,6 +66,9 @@ export function parseNumericField(bytes, fieldName, details = {}) {
   while (end > start && (bytes[end - 1] === 0 || bytes[end - 1] === 0x20)) end -= 1;
   while (start < end && bytes[start] === 0x20) start += 1;
   if (start === end) return 0;
+  if (end === bytes.length) {
+    throw new TarFormatError(C.NUMERIC_FIELD, fieldName + ' is missing its required NUL or space terminator', details);
+  }
 
   let value = 0n;
   for (let index = start; index < end; index += 1) {
@@ -95,8 +99,8 @@ function checksums(block) {
 function headerMagic(block) {
   const magic = block.subarray(257, 263);
   if (magic[0] === 0x75 && magic[1] === 0x73 && magic[2] === 0x74 && magic[3] === 0x61 && magic[4] === 0x72) {
-    if (magic[5] === 0) return 'ustar';
-    if (magic[5] === 0x20) return 'gnu';
+    if (magic[5] === 0 && block[263] === 0x30 && block[264] === 0x30) return 'ustar';
+    if (magic[5] === 0x20 && block[263] === 0x20 && block[264] === 0) return 'gnu';
   }
   let zero = true;
   for (const byte of magic) {
@@ -217,6 +221,9 @@ export function parsePaxPayload(payload, details = {}) {
     const key = decodeAscii(body.subarray(0, equals), 'PAX key', details);
     if (!PAX_KEY_RE.test(key) || isForbiddenObjectKey(key)) {
       throw new TarFormatError(C.PAX_FORMAT, 'PAX key is not portable or is forbidden', { ...details, key });
+    }
+    if (UNSUPPORTED_PAX_KEYS.has(key) || key.startsWith('GNU.sparse.')) {
+      throw new TarFormatError(C.UNSUPPORTED_EXTENSION, 'unsupported PAX extension key changes extraction semantics', { ...details, key });
     }
     if (records.has(key)) {
       throw new TarFormatError(C.PAX_FORMAT, 'duplicate PAX key in one extended header', { ...details, key });

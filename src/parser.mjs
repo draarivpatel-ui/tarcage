@@ -216,6 +216,15 @@ async function consumeEntryData(reader, size, policy, context, sink) {
   }
 }
 
+function symlinkAtPath(symlinks, name) {
+  if (symlinks.has(name)) return symlinks.get(name);
+  const wanted = collisionKey(name);
+  for (const [candidate, target] of symlinks) {
+    if (collisionKey(candidate) === wanted) return target;
+  }
+  return undefined;
+}
+
 function validateEntryLinks(entries, policy) {
   const symlinks = new Map();
   for (const entry of entries) {
@@ -246,6 +255,9 @@ function validateEntryLinks(entries, policy) {
 
   for (const entry of entries) {
     if (entry.type !== 'hardlink') continue;
+    if (symlinkAtPath(symlinks, entry.linkname) !== undefined) {
+      throw new TarFormatError(C.LINK_INVALID, 'hardlink target cannot be a symlink', { path: entry.name, linkname: entry.linkname });
+    }
     try {
       const resolved = resolveRootRelativeWithinRoot(entry.linkname, symlinks, policy);
       if (resolved === '.') {

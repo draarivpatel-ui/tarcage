@@ -470,3 +470,50 @@ test('non-link entry carrying a link target is malformed', async () => {
   assert.equal(report.safe, false);
   assert.equal(report.findings[0].code, 'TARCAGE_MALFORMED_ARCHIVE');
 });
+
+test('ustar magic with a malformed version is rejected', async () => {
+  const report = await inspectTar(archiveWithFirstHeaderPatch(263, 'X0'));
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_MALFORMED_ARCHIVE');
+});
+
+test('GNU magic with a malformed version is rejected', async () => {
+  const archive = patchFirstHeader(makeTar([file('a', 'x', { format: 'gnu' })]), 264, 'X');
+  const report = await inspectTar(archive);
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_MALFORMED_ARCHIVE');
+});
+
+for (const [field, offset, text] of [
+  ['mode', 100, '00000644'],
+  ['size', 124, '000000000001']
+]) {
+  test('unterminated numeric field rejected for ' + field, async () => {
+    const report = await inspectTar(archiveWithFirstHeaderPatch(offset, text));
+    assert.equal(report.safe, false);
+    assert.equal(report.findings[0].code, 'TARCAGE_NUMERIC_FIELD');
+  });
+}
+
+for (const key of ['GNU.sparse', 'GNU.sparse.map', 'GNU.dumpdir', 'SCHILY.filetype']) {
+  test('unsupported semantic PAX extension rejected: ' + key, async () => {
+    const report = await inspectTar(makeTar([paxEntry({ [key]: key === 'SCHILY.filetype' ? 'regular' : '1' }), file('a', 'x')]));
+    assert.equal(report.safe, false);
+    assert.equal(report.findings[0].code, 'TARCAGE_UNSUPPORTED_EXTENSION');
+  });
+}
+
+test('unsupported semantic global PAX extension is rejected before later entries', async () => {
+  const report = await inspectTar(makeTar([
+    { name: 'pg', typeflag: 'g', content: paxPayload({ 'GNU.sparse.realsize': '99' }) },
+    file('a', 'x')
+  ]));
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_UNSUPPORTED_EXTENSION');
+});
+
+test('GNU sparse typeflag is rejected explicitly', async () => {
+  const report = await inspectTar(makeTar([{ name: 'sparse', typeflag: 'S', content: '', size: 0 }]));
+  assert.equal(report.safe, false);
+  assert.equal(report.findings[0].code, 'TARCAGE_UNSUPPORTED_TYPEFLAG');
+});

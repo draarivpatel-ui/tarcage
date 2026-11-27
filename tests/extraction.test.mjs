@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink as makeSymlink, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink as makeSymlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { extractTar, inspectTar } from '../src/index.mjs';
+import { writeFileChunkFully } from '../src/extract.mjs';
 import { directory, file, gzip, hardlink, makeTar, symlink } from './helpers.mjs';
 
 async function tempDir() {
@@ -544,6 +545,59 @@ test('existing directories are not chmodded by archive entries', async () => {
     await extractTar(makeTar([directory('d/', { mode: 0o700 }), file('d/a', 'x')]), dest);
     if (process.platform !== 'win32') assert.equal(await fileMode(path.join(dest, 'd')), before);
   } finally {
+    await cleanup(base);
+  }
+});
+
+test('file chunk writer completes partial filesystem writes in order', async () => {
+  const pieces = [];
+  const handle = {
+    async write(buffer, offset, length) {
+      const amount = Math.min(2, length);
+      pieces.push(Buffer.from(buffer.subarray(offset, offset + amount)));
+      return { bytesWritten: amount };
+    }
+  };
+  const total = await writeFileChunkFully(handle, Buffer.from('abcdef'), 'partial-test');
+  assert.equal(total, 6);
+  assert.equal(Buffer.concat(pieces).toString('utf8'), 'abcdef');
+});
+
+test('file chunk writer rejects a zero-progress filesystem write', async () => {
+  const handle = {
+    async write() {
+      return { bytesWritten: 0 };
+    }
+  };
+  await assert.rejects(writeFileChunkFully(handle, Buffer.from('abc'), 'zero-progress'), (error) => error.code === 'TARCAGE_EXTRACTION_IO');
+});
+
+test('restrictive directory modes are deferred until child entries are written', async () => {
+  const result = await extractToTemp(makeTar([directory('d/', { mode: 0o444 }), file('d/a', 'x')]));
+  try {
+    assert.equal(result.report.extracted, 2);
+    if (process.platform !== 'win32') assert.equal(await fileMode(path.join(result.dest, 'd')), 0o444);
+    await chmod(path.join(result.dest, 'd'), 0o700).catch(() => {});
+    assert.equal(await readFile(path.join(result.dest, 'd/a'), 'utf8'), 'x');
+  } finally {
+    await chmod(path.join(result.dest, 'd'), 0o700).catch(() => {});
+    await cleanup(result.base);
+  }
+});
+
+test('rollback removes created files even when an archive declares restrictive directory modes', async () => {
+  const base = await tempDir();
+  try {
+    const dest = path.join(base, 'out');
+    await mkdir(dest);
+    await writeFile(path.join(dest, 'blocker'), 'keep');
+    const archive = makeTar([file('d/secret', 'x'), directory('d/', { mode: 0o444 }), file('blocker', 'new')]);
+    await assert.rejects(extractTar(archive, dest), (error) => error.code === 'TARCAGE_EXTRACTION_OVERWRITE');
+    assert.equal(await exists(path.join(dest, 'd/secret')), false);
+    assert.equal(await exists(path.join(dest, 'd')), false);
+    assert.equal(await readFile(path.join(dest, 'blocker'), 'utf8'), 'keep');
+  } finally {
+    await chmod(path.join(base, 'out', 'd'), 0o700).catch(() => {});
     await cleanup(base);
   }
 });

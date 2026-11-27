@@ -8,10 +8,10 @@ The package is pure ESM, uses only Node.js built-ins, and supports Node 18 or ne
 
 The default policy is fail-closed. It is designed for untrusted archives and blocks or limits the following attack classes:
 
-- Tar-Slip and path traversal, including CVE-2007-4559 style extraction outside the destination, CWE-22 absolute paths, drive paths, UNC paths, parent traversal, backslash separators, NUL bytes, control characters, bidi controls, invisible formatting characters, Windows device names, trailing dots or spaces, overlong paths, excessive depth, duplicate entries, overlapping entries, and case-insensitive collisions.
+- Tar-Slip and path traversal, including CVE-2007-4559 style extraction outside the destination, CWE-22 absolute paths, drive paths, UNC paths, parent traversal, backslash separators, NUL bytes, control characters, bidi controls, Unicode format characters, line separators, unpaired surrogates, Windows device names, Windows-invalid filename characters and alternate data stream syntax, trailing dots or spaces, overlong paths, excessive depth, duplicate entries, overlapping entries, and case-insensitive collisions.
 - Symlink and hardlink escape, CWE-59 and CWE-61. Links are blocked by default. When explicitly enabled, targets are resolved lexically inside the extraction root, chained links are checked, cycles are rejected, pre-existing disk symlinks are never followed, and every parent directory is checked with `lstat` plus a realpath root-boundary test.
 - Special files and unsafe permission bits. Character devices, block devices, FIFOs, contiguous entries, and unknown typeflags are blocked by default. Setuid, setgid, and sticky bits are stripped unless explicitly enabled. Extraction never creates device nodes or FIFOs.
-- Header spoofing and parser differentials. Header checksums are verified, legacy signed checksums are rejected unless explicitly enabled, numeric fields reject negative and overflowing values, PAX records are strictly length checked, duplicate PAX and GNU metadata are rejected, conflicting `path`, `linkpath`, and `size` values are rejected, entry padding must be zero, and `strictEof` detects missing end blocks or trailing non-zero data.
+- Header spoofing and parser differentials. Header checksums are verified, legacy signed checksums are rejected unless explicitly enabled, numeric fields reject negative and overflowing values, PAX records are strictly length checked, duplicate PAX and GNU metadata are rejected, conflicting `path`, `linkpath`, and `size` values are rejected, semantic PAX extensions for sparse or incremental extraction fail closed, entry padding must be zero, and `strictEof` detects missing end blocks, trailing non-zero tar data, or unread bytes after the final gzip member.
 - Tar and gzip resource exhaustion, CWE-409. Limits cover compressed input bytes, uncompressed archive bytes, individual entry bytes, entry count, path depth, path length, metadata bytes, metadata count, compression ratio, and symlink chain depth. Gzip input is decompressed as a stream, so a bomb is rejected while data is flowing rather than after buffering the whole expanded payload.
 
 Inspection is non-executable and does not write files. Extraction performs a complete pre-flight pass before writing. It never overwrites existing filesystem objects. If extraction fails after writing begins, files, links, and directories created by that extraction are removed in reverse order.
@@ -76,8 +76,8 @@ Safely extracts after a complete pre-flight validation pass. The extractor:
 2. Re-reads the input and compares the uncompressed SHA-256 from both passes, rolling back if the input changed.
 3. Creates no overwrite of any existing file, symlink, directory, FIFO, socket, or device.
 4. Creates parent directories without following pre-existing symlinks.
-5. Applies sanitized modes and the configured policy umask.
-6. Rolls back only filesystem objects created by the current extraction if failure occurs.
+5. Applies sanitized file modes and the configured policy umask. Directory modes are deferred until all child entries have been written.
+6. Restores write access to directories it created before rollback, then removes only filesystem objects created by the current extraction if failure occurs.
 
 `dryRun: true` validates and reports the extraction plan without touching the destination. `stripComponents` removes leading archive path components before extraction. Stripping is validated again because it can change collision and symlink semantics.
 
@@ -193,13 +193,13 @@ const report: TarInspectReport = await inspectTar(input);
 node scripts/run-tests.mjs
 ```
 
-The verified local release suite contains 627 deterministic tests.
+The verified local release suite contains 673 deterministic tests.
 
 The runner explicitly enumerates `tests/*.test.mjs` with `fs.readdirSync` and passes exact file paths to `node --test`. It does not depend on shell glob expansion, so the same command works on Linux, macOS, and Windows.
 
 ## Limitations
 
-- Sparse files, multi-volume archives, incremental GNU metadata, Solaris extensions, and vendor-specific typeflags are not extracted.
+- Sparse files, multi-volume archives, incremental GNU metadata, Solaris filetype extensions, and vendor-specific typeflags are rejected instead of being extracted with incompatible regular-file semantics.
 - PAX extension keys other than `path`, `linkpath`, and `size` are parsed and exposed in entry metadata but do not alter extraction behavior.
 - File data is streamed during extraction, but archive metadata and the entry list are retained in memory up to `maxEntries`.
 - The uncompressed SHA-256 two-pass check detects input replacement between validation and extraction. It does not make a path input immutable, so callers handling hostile local writers should pass a stable `Buffer` or protect the file themselves.

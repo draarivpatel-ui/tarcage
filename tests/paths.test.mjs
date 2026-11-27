@@ -275,3 +275,38 @@ for (let length = 90; length <= 110; length += 5) {
     assert.equal(validateTarPath(value).valid, true);
   });
 }
+
+for (const value of ['file.txt:stream', 'dir/a<b', 'dir/a>b', 'dir/a?b', 'dir/a*b', 'dir/a|b', 'dir/a"b']) {
+  test('Windows-invalid filename character rejected: ' + JSON.stringify(value), () => {
+    const result = validateTarPath(value);
+    assert.equal(result.valid, false);
+    assert.equal(result.findings[0].code, 'TARCAGE_WINDOWS_INVALID_CHARACTER');
+  });
+}
+
+for (const value of ['CONIN$', 'CONOUT$', 'dir/conin$.txt', 'dir/conout$.txt']) {
+  test('Windows console device alias rejected: ' + value, () => {
+    const result = validateTarPath(value);
+    assert.equal(result.valid, false);
+    assert.equal(result.findings[0].code, 'TARCAGE_RESERVED_NAME');
+  });
+}
+
+for (const codePoint of [0x061c, 0x00ad, 0x070f, 0x08e2, 0x2028, 0x2029]) {
+  test('unicode format or line control rejected: ' + codePoint.toString(16), () => {
+    const result = validateTarPath('safe' + String.fromCodePoint(codePoint) + 'evil');
+    assert.equal(result.valid, false);
+    assert.equal(result.findings[0].code, 'TARCAGE_CONTROL_CHARACTER');
+  });
+}
+
+for (const [name, value] of [
+  ['lone high surrogate', 'safe\ud800evil'],
+  ['lone low surrogate', 'safe\udc00evil']
+]) {
+  test('unpaired surrogate rejected in standalone path validation: ' + name, () => {
+    const result = validateTarPath(value);
+    assert.equal(result.valid, false);
+    assert.equal(result.findings[0].code, 'TARCAGE_CONTROL_CHARACTER');
+  });
+}
