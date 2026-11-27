@@ -1,5 +1,7 @@
 # tarcage
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/draarivpatel-ui/tarcage/badge)](https://scorecard.dev/viewer/?uri=github.com/draarivpatel-ui/tarcage)
+
 `tarcage` is a zero-dependency Node.js library for inspecting, auditing, and safely extracting tar archives. It parses POSIX ustar, PAX extended headers, GNU long names and links, and old V7-style headers. It accepts plain `.tar` data and gzip-compressed `.tar.gz` or `.tgz` data from a `Buffer`, `Uint8Array`, or file path.
 
 The package is pure ESM, uses only Node.js built-ins, and supports Node 18 or newer.

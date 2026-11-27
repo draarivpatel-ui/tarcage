@@ -169,10 +169,11 @@ test('gitattributes explicitly enforces LF for every required text extension', a
   }
 });
 
-test('package has zero runtime and development dependencies', async () => {
+test('package has zero runtime dependencies and only the pinned fuzz development dependency', async () => {
   const pkg = JSON.parse(await readRoot('package.json'));
   assert.deepEqual(pkg.dependencies, {});
-  assert.deepEqual(pkg.devDependencies, {});
+  assert.deepEqual(Object.keys(pkg.devDependencies), ['fast-check']);
+  assert.match(pkg.devDependencies['fast-check'], /^\d+\.\d+\.\d+$/);
   assert.equal(pkg.sideEffects, false);
   assert.equal(pkg.type, 'module');
 });
@@ -202,9 +203,10 @@ test('package release surface excludes tests scratch and workflow internals', as
   ]);
 });
 
-test('package has no lockfile or dependency directory', async () => {
-  await assert.rejects(access(path.join(root, 'node_modules')));
-  await assert.rejects(access(path.join(root, 'package-lock.json')));
+test('package has a reproducible lockfile and no shrinkwrap shadow file', async () => {
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  assert.equal(lock.packages[''].dependencies, undefined);
+  assert.deepEqual(Object.keys(lock.packages[''].devDependencies), ['fast-check']);
   await assert.rejects(access(path.join(root, 'npm-shrinkwrap.json')));
 });
 

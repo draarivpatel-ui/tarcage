@@ -2,7 +2,7 @@
 
 ## Ground rules
 
-- Keep the package zero-dependency in both runtime and development. Use Node.js built-ins only.
+- Keep the package zero-dependency at runtime. Use Node.js built-ins in library code, and keep development dependencies limited to the pinned fast-check property-testing library.
 - Keep the library pure ESM. Do not add a transpiler or a generated CommonJS build.
 - Preserve fail-closed defaults. Convenience must not weaken validation for untrusted archives.
 - Every security behavior needs a deterministic regression test and, where practical, a malformed-archive fixture generated in the test itself.
