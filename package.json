@@ -1,0 +1,62 @@
+{
+  "name": "tarcage",
+  "version": "1.0.0",
+  "description": "Zero-dependency tar archive security inspection and safe extraction for Node.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/draarivpatel-ui/tarcage.git"
+  },
+  "homepage": "https://github.com/draarivpatel-ui/tarcage#readme",
+  "bugs": {
+    "url": "https://github.com/draarivpatel-ui/tarcage/issues"
+  },
+  "type": "module",
+  "main": "./src/index.mjs",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.mjs",
+      "default": "./src/index.mjs"
+    },
+    "./types": "./types/index.d.ts"
+  },
+  "bin": {
+    "tarcage": "./bin/tarcage.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "types",
+    "examples",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "test:windows": "node scripts/run-tests.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "security",
+    "tar",
+    "tar-slip",
+    "tar-bomb",
+    "gzip-bomb",
+    "cwe-22",
+    "cwe-59",
+    "cwe-409",
+    "archive-extraction",
+    "zero-dependency"
+  ],
+  "license": "MIT",
+  "sideEffects": false,
+  "dependencies": {},
+  "devDependencies": {}
+}
